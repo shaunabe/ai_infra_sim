@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Infrastructure Deployment Simulator — Third Sphere</title>
+<meta name="description" content="Interactive simulator comparing 7 AI infrastructure deployment architectures across scenarios and geographies. By Third Sphere.">
+<meta property="og:title" content="AI Infrastructure Deployment Simulator — Third Sphere">
+<meta property="og:description" content="7 architectures · 7 scenarios · 2 geographies. Interactive scenario modeling for AI infrastructure investment.">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body, #root { height: 100%; width: 100%; overflow: hidden; }
+  input[type="range"] { -webkit-appearance: none; appearance: none; background: #334155; border-radius: 4px; outline: none; }
+  input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: #0D9488; cursor: pointer; border: 2px solid #0F172A; }
+  input[type="range"]::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: #0D9488; cursor: pointer; border: 2px solid #0F172A; }
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
+  button { font-family: inherit; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useMemo, useCallback } = React;
+const {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis,
+  PolarRadiusAxis, Radar, Cell, LineChart, Line
+} = Recharts;
+
+const ARCHITECTURES = {
+  centralized: {
+    id: "centralized", name: "Centralized Hyperscale",
+    examples: "Google, Microsoft, Amazon, Meta", color: "#5B21B6",
+    description: "Gigawatt-scale campuses with dedicated transmission. 5-8yr interconnect queues.",
+    stackOwnership: { realEstate: "Hyperscaler or REIT", power: "Utility PPA or captive", fiber: "Hyperscaler builds/buys", hardware: "Hyperscaler owns", orchestration: "Hyperscaler owns" }
+  },
+  captivePower: {
+    id: "captivePower", name: "Hyperscaler Captive Power",
+    examples: "Google/Intersect, MSFT/Three Mile Island, Amazon/Talen", color: "#0369A1",
+    description: "Hyperscalers acquire or build dedicated generation (nuclear, gas, geothermal). Eliminates grid dependence but 3-10yr timelines for new gen.",
+    stackOwnership: { realEstate: "Hyperscaler or acquired genco", power: "Captive generation (nuclear/gas/geothermal)", fiber: "Hyperscaler builds", hardware: "Hyperscaler owns", orchestration: "Hyperscaler owns" }
+  },
+  brownfield: {
+    id: "brownfield", name: "Brownfield Reuse",
+    examples: "Cumulus/Susquehanna, Switch coal conversions, industrial reuse", color: "#78716C",
+    description: "Retired coal/gas plants & industrial sites converted to AI compute. Existing interconnection, substations, and transmission bypass the queue entirely.",
+    stackOwnership: { realEstate: "Developer or hyperscaler acquires site", power: "Existing interconnection + new on-site gen", fiber: "Often existing industrial fiber nearby", hardware: "Hyperscaler or developer owns", orchestration: "Hyperscaler or developer owns" }
+  },
+  poweredLand: {
+    id: "poweredLand", name: "Powered Land Aggregator",
+    examples: "Nodiac, Intersect Power model", color: "#0D9488",
+    description: "Cell-tower REIT for compute. Secures 1-10MW utility headroom, sells naked power options to hyperscalers.",
+    stackOwnership: { realEstate: "Nodiac / Greenbacker", power: "Existing renewables + utility headroom", fiber: "Nodiac secures", hardware: "Hyperscaler owns", orchestration: "Hyperscaler owns" }
+  },
+  edgeCloud: {
+    id: "edgeCloud", name: "Behind-the-Meter Neo-Cloud",
+    examples: "Lektra, Plentify model", color: "#D97706",
+    description: "Micro data centers at solar/battery sites. Bypasses grid entirely. 60-80% cheaper than AWS claim.",
+    stackOwnership: { realEstate: "Energy host (homeowner/business)", power: "Behind-the-meter solar + battery", fiber: "Existing broadband/5G", hardware: "Lektra or host owns (Dell partner)", orchestration: "Lektra owns (Maestro)" }
+  },
+  neoCloud: {
+    id: "neoCloud", name: "Neo-Cloud (Grid-Tied)",
+    examples: "CoreWeave, RunPod, Vast AI", color: "#DC2626",
+    description: "Leased data centers with owned GPUs. Agile but exposed to grid energy price volatility.",
+    stackOwnership: { realEstate: "Leased from DC REITs", power: "Grid-tied (vulnerable)", fiber: "Leased from carriers", hardware: "Neo-cloud owns/leases", orchestration: "Neo-cloud owns" }
+  },
+  byoHardware: {
+    id: "byoHardware", name: "BYO Hardware / Consumer Edge",
+    examples: "Apple on-device, Helium model", color: "#6D28D9",
+    description: "Latent consumer devices for inference. Software deployment only. Best-effort QoS.",
+    stackOwnership: { realEstate: "Consumer", power: "Consumer grid/solar", fiber: "Consumer broadband", hardware: "Consumer owns", orchestration: "Platform provider (Apple)" }
+  }
+};
+
+const GEOGRAPHIES = {
+  us: { name: "United States", gridReliability: 0.85, avgElectricityCost: 0.12, solarIrradiance: 0.75, interconnectQueueYears: 6.5, laborAvailability: 0.4, fiberPenetration: 0.85, regulatorySpeed: 0.3, curtailmentRate: 0.05, highCurtailmentPockets: 0.15, existingSubstationHeadroom: 0.6, consumerBroadband: 0.9, solarCostPerWatt: 0.49, batteryStorageCostKwh: 180, brownfieldSiteAvailability: 0.75, nuclearPipelineMaturity: 0.3 },
+  southernAfrica: { name: "Southern Africa", gridReliability: 0.45, avgElectricityCost: 0.08, solarIrradiance: 0.92, interconnectQueueYears: 3, laborAvailability: 0.55, fiberPenetration: 0.35, regulatorySpeed: 0.5, curtailmentRate: 0.02, highCurtailmentPockets: 0.04, existingSubstationHeadroom: 0.25, consumerBroadband: 0.3, solarCostPerWatt: 0.55, batteryStorageCostKwh: 220, brownfieldSiteAvailability: 0.35, nuclearPipelineMaturity: 0.1 }
+};
+
+const SCENARIO_PRESETS = {
+  base: { name: "Base Case: Interconnect Crisis Deepens", shortName: "Interconnect Crisis", probability: "~60%", description: "5-8yr queues persist. Hyperscalers desperate for near-term capacity. Open source captures 40-50% of inference by 2028.", params: { interconnectImprovement: 0, openSourceAdoption: 0.45, energyPriceVolatility: 0.5, laborSupplyGrowth: 0.1, hyperscalerEdgeBuild: 0.2, inferenceShift: 0.6, chipSpecialization: 0.7, appleEdgeLaunch: 0, bubbleBurst: 0, brownfieldConversion: 0.3, captivePowerBuild: 0.25 } },
+  brownfield: { name: "Brownfield Gold Rush", shortName: "Brownfield Rush", probability: "~30%", description: "Retired coal/gas sites become prime AI real estate. Existing interconnection bypasses 5-8yr queues.", params: { interconnectImprovement: 0.15, openSourceAdoption: 0.4, energyPriceVolatility: 0.4, laborSupplyGrowth: 0.15, hyperscalerEdgeBuild: 0.15, inferenceShift: 0.45, chipSpecialization: 0.6, appleEdgeLaunch: 0, bubbleBurst: 0, brownfieldConversion: 0.85, captivePowerBuild: 0.4 } },
+  openSource: { name: "Open Source Dominance + Enterprise Edge", shortName: "Open Source Wave", probability: "~25%", description: "Open source 60%+ of inference. Enterprises move on-prem. Token costs collapse toward pure energy cost.", params: { interconnectImprovement: 0.1, openSourceAdoption: 0.7, energyPriceVolatility: 0.6, laborSupplyGrowth: 0.15, hyperscalerEdgeBuild: 0.3, inferenceShift: 0.8, chipSpecialization: 0.4, appleEdgeLaunch: 0.1, bubbleBurst: 0, brownfieldConversion: 0.3, captivePowerBuild: 0.2 } },
+  gridFixed: { name: "Interconnect Gets Fixed", shortName: "Grid Fixed", probability: "~10%", description: "Policy reforms accelerate grid. Modular nuclear/geothermal by 2028-29. Hyperscalers solve own power.", params: { interconnectImprovement: 0.8, openSourceAdoption: 0.3, energyPriceVolatility: 0.2, laborSupplyGrowth: 0.3, hyperscalerEdgeBuild: 0.1, inferenceShift: 0.4, chipSpecialization: 0.8, appleEdgeLaunch: 0, bubbleBurst: 0, brownfieldConversion: 0.5, captivePowerBuild: 0.7 } },
+  appleEdge: { name: "Apple / Consumer Edge Surprise", shortName: "Apple Edge", probability: "~15%", description: "Apple launches distributed inference across device fleet. Consumer devices handle 30-40% of routine inference.", params: { interconnectImprovement: 0.1, openSourceAdoption: 0.5, energyPriceVolatility: 0.4, laborSupplyGrowth: 0.15, hyperscalerEdgeBuild: 0.15, inferenceShift: 0.75, chipSpecialization: 0.6, appleEdgeLaunch: 0.9, bubbleBurst: 0, brownfieldConversion: 0.25, captivePowerBuild: 0.2 } },
+  bubble: { name: "The Bubble Bursts (Bear Case)", shortName: "Bubble Bursts", probability: "~20%", description: "$400B AI spend recognized as bubble. Halted construction. Stranded infra becomes dark fiber of 2020s.", params: { interconnectImprovement: 0.2, openSourceAdoption: 0.5, energyPriceVolatility: 0.8, laborSupplyGrowth: 0.05, hyperscalerEdgeBuild: 0.05, inferenceShift: 0.5, chipSpecialization: 0.5, appleEdgeLaunch: 0.1, bubbleBurst: 0.9, brownfieldConversion: 0.15, captivePowerBuild: 0.1 } },
+  captiveDominance: { name: "Hyperscaler Self-Generation (Bypass the Grid)", shortName: "Captive Power", probability: "~20%", description: "Hyperscalers vertically integrate power generation. Grid becomes irrelevant for AI.", params: { interconnectImprovement: 0.15, openSourceAdoption: 0.35, energyPriceVolatility: 0.25, laborSupplyGrowth: 0.2, hyperscalerEdgeBuild: 0.1, inferenceShift: 0.3, chipSpecialization: 0.85, appleEdgeLaunch: 0, bubbleBurst: 0, brownfieldConversion: 0.45, captivePowerBuild: 0.9 } }
+};
+
+function simulateArchitecture(archId, params, geo) {
+  const g = geo, p = params;
+  let deploymentSpeed, costPerMW, viability, revenuePerMW, hyperscalerFit, riskScore;
+  const gridBroken = 1 - p.interconnectImprovement;
+  const inferenceDistributed = p.inferenceShift * (1 + p.openSourceAdoption) / 2;
+  switch (archId) {
+    case "centralized":
+      deploymentSpeed = Math.max(2, g.interconnectQueueYears * gridBroken * (1 - p.laborSupplyGrowth));
+      costPerMW = 10000 * (1 + p.energyPriceVolatility * 0.3);
+      revenuePerMW = 1200 * (1 - p.bubbleBurst * 0.6);
+      hyperscalerFit = 0.9 * (1 - inferenceDistributed * 0.3);
+      viability = (1 - gridBroken * 0.6) * g.gridReliability * (1 - p.bubbleBurst * 0.7);
+      riskScore = gridBroken * 0.4 + p.bubbleBurst * 0.4 + (1 - g.laborAvailability) * 0.2;
+      break;
+    case "captivePower":
+      deploymentSpeed = Math.max(2.5, 6 * (1 - (g.nuclearPipelineMaturity || 0.2) * 0.3) * (1 - (p.captivePowerBuild || 0.25) * 0.25));
+      costPerMW = 15000 * (1 - (p.captivePowerBuild || 0.25) * 0.15);
+      revenuePerMW = 1400 * (1 - p.bubbleBurst * 0.5);
+      hyperscalerFit = 0.95;
+      viability = (p.captivePowerBuild || 0.25) * 0.3 + (g.nuclearPipelineMaturity || 0.2) * 0.2 + gridBroken * 0.2 + (1 - p.energyPriceVolatility) * 0.15 + (g.regulatorySpeed || 0.3) * 0.15;
+      viability *= (1 - p.bubbleBurst * 0.6);
+      riskScore = (1 - (p.captivePowerBuild || 0.25)) * 0.2 + p.bubbleBurst * 0.35 + (1 - (g.nuclearPipelineMaturity || 0.2)) * 0.2 + (1 - (g.regulatorySpeed || 0.3)) * 0.15 + 0.1;
+      break;
+    case "brownfield":
+      var siteAvail = g.brownfieldSiteAvailability || 0.5;
+      deploymentSpeed = Math.max(0.8, 2.5 * (1 - siteAvail * 0.3) * (1 - (p.brownfieldConversion || 0.3) * 0.3));
+      costPerMW = 4000 * (1 - (p.brownfieldConversion || 0.3) * 0.2) * (1 + (1 - siteAvail) * 0.3);
+      revenuePerMW = 1000 * (1 + gridBroken * 0.3) * (1 - p.bubbleBurst * 0.45);
+      hyperscalerFit = Math.min(1, 0.8 * (1 + (p.brownfieldConversion || 0.3) * 0.15));
+      viability = siteAvail * 0.25 + gridBroken * 0.25 + (p.brownfieldConversion || 0.3) * 0.2 + g.gridReliability * 0.15 + g.fiberPenetration * 0.15;
+      viability *= (1 - p.bubbleBurst * 0.35);
+      riskScore = (1 - siteAvail) * 0.25 + p.interconnectImprovement * 0.2 + p.bubbleBurst * 0.25 + (1 - g.laborAvailability) * 0.15 + 0.15;
+      break;
+    case "poweredLand":
+      deploymentSpeed = Math.max(0.5, 1.5 * (1 - g.existingSubstationHeadroom * 0.5));
+      costPerMW = 800 * (1 + (1 - g.existingSubstationHeadroom) * 0.5);
+      revenuePerMW = 700 * (1 + gridBroken * 0.5) * (1 - p.bubbleBurst * 0.3);
+      hyperscalerFit = 0.95 * (1 - p.interconnectImprovement * 0.3);
+      viability = gridBroken * 0.5 + g.existingSubstationHeadroom * 0.3 + g.fiberPenetration * 0.2;
+      viability *= (1 - p.bubbleBurst * 0.25);
+      riskScore = p.interconnectImprovement * 0.5 + (1 - g.existingSubstationHeadroom) * 0.3 + p.bubbleBurst * 0.2;
+      break;
+    case "edgeCloud":
+      deploymentSpeed = Math.max(0.3, 1 * (1 - g.solarIrradiance * 0.3));
+      costPerMW = 600 * (1 + (1 - g.consumerBroadband) * 0.4);
+      revenuePerMW = 500 * (1 + inferenceDistributed * 0.6) * (1 - p.bubbleBurst * 0.2);
+      hyperscalerFit = 0.35 * (1 - p.chipSpecialization * 0.3 - p.hyperscalerEdgeBuild * 0.3);
+      viability = inferenceDistributed * 0.3 + g.solarIrradiance * 0.25 + (1 - g.gridReliability) * 0.15 + p.openSourceAdoption * 0.2 + (1 - p.appleEdgeLaunch) * 0.1;
+      viability *= (1 - p.bubbleBurst * 0.15);
+      riskScore = p.hyperscalerEdgeBuild * 0.25 + p.chipSpecialization * 0.2 + p.appleEdgeLaunch * 0.25 + (1 - g.consumerBroadband) * 0.15 + (1 - g.solarIrradiance) * 0.15;
+      break;
+    case "neoCloud":
+      deploymentSpeed = Math.max(1, 2 * (1 - g.gridReliability * 0.3));
+      costPerMW = 3000 * (1 + p.energyPriceVolatility * 0.5);
+      revenuePerMW = 900 * (1 - p.energyPriceVolatility * 0.3) * (1 - p.bubbleBurst * 0.5);
+      hyperscalerFit = 0.5 * (1 - p.chipSpecialization * 0.3);
+      viability = 0.5 * g.gridReliability * (1 - p.energyPriceVolatility * 0.4) * (1 - p.bubbleBurst * 0.5);
+      riskScore = p.energyPriceVolatility * 0.4 + p.bubbleBurst * 0.3 + (1 - g.gridReliability) * 0.3;
+      break;
+    case "byoHardware":
+      deploymentSpeed = 0.2;
+      costPerMW = 50;
+      revenuePerMW = 80 * (1 + p.appleEdgeLaunch * 2);
+      hyperscalerFit = 0.15 + p.appleEdgeLaunch * 0.4;
+      viability = p.appleEdgeLaunch * 0.4 + inferenceDistributed * 0.3 + g.consumerBroadband * 0.2 + p.openSourceAdoption * 0.1;
+      viability *= (1 - p.bubbleBurst * 0.1);
+      riskScore = (1 - g.consumerBroadband) * 0.3 + (1 - p.appleEdgeLaunch) * 0.4 + 0.3;
+      break;
+  }
+  viability = Math.max(0, Math.min(1, viability));
+  riskScore = Math.max(0, Math.min(1, riskScore));
+  hyperscalerFit = Math.max(0, Math.min(1, hyperscalerFit));
+  return { id: archId, name: ARCHITECTURES[archId].name, color: ARCHITECTURES[archId].color, deploymentYears: Math.round(deploymentSpeed * 10) / 10, capexPerMW: Math.round(costPerMW), revenuePerMW: Math.round(revenuePerMW), viabilityScore: Math.round(viability * 100), hyperscalerAlignment: Math.round(hyperscalerFit * 100), riskScore: Math.round(riskScore * 100), roi: revenuePerMW > 0 && costPerMW > 0 ? Math.round((revenuePerMW / costPerMW) * 100) : 0 };
+}
+
+const FONT = "'Instrument Serif', Georgia, serif";
+const MONO = "'JetBrains Mono', 'SF Mono', monospace";
+const SANS = "'DM Sans', 'Helvetica Neue', sans-serif";
+
+function SliderParam({ label, value, onChange, min = 0, max = 1, step = 0.05, hint }) {
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 2 }}>
+        <label style={{ fontFamily: SANS, fontSize: 10.5, fontWeight: 600, color: "#CBD5E1", letterSpacing: "0.02em" }}>{label}</label>
+        <span style={{ fontFamily: MONO, fontSize: 10, color: "#64748B", fontWeight: 500 }}>{Math.round(value * 100)}%</span>
+      </div>
+      <input type="range" min={min} max={max} step={step} value={value} onChange={e => onChange(parseFloat(e.target.value))} style={{ width: "100%", accentColor: "#0D9488", height: 3, cursor: "pointer" }} />
+      {hint && <div style={{ fontFamily: SANS, fontSize: 9, color: "#475569", marginTop: 1, lineHeight: 1.3 }}>{hint}</div>}
+    </div>
+  );
+}
+
+function MetricCard({ label, value, unit, sub, color }) {
+  return (
+    <div style={{ background: `linear-gradient(135deg, ${color}08, ${color}15)`, border: `1px solid ${color}25`, borderRadius: 10, padding: "14px 16px", flex: 1, minWidth: 120 }}>
+      <div style={{ fontFamily: SANS, fontSize: 10, fontWeight: 600, color: "#64748B", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{label}</div>
+      <div style={{ fontFamily: MONO, fontSize: 22, fontWeight: 700, color: color || "#1E293B" }}>{value}<span style={{ fontSize: 12, fontWeight: 400, color: "#94A3B8" }}> {unit}</span></div>
+      {sub && <div style={{ fontFamily: SANS, fontSize: 10, color: "#94A3B8", marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+}
+
+function ArchCard({ arch, result, isSelected, onClick }) {
+  const a = ARCHITECTURES[arch];
+  return (
+    <div onClick={onClick} style={{ border: isSelected ? `2px solid ${a.color}` : "1px solid #E2E8F0", borderRadius: 12, padding: "12px 14px", cursor: "pointer", background: isSelected ? `${a.color}08` : "#FAFBFC", transition: "all 0.2s ease", boxShadow: isSelected ? `0 2px 12px ${a.color}20` : "none" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+        <div style={{ width: 10, height: 10, borderRadius: "50%", background: a.color, flexShrink: 0 }} />
+        <div style={{ fontFamily: SANS, fontSize: 12, fontWeight: 700, color: "#1E293B", lineHeight: 1.2 }}>{a.name}</div>
+      </div>
+      <div style={{ fontFamily: SANS, fontSize: 9.5, color: "#64748B", marginBottom: 8, lineHeight: 1.4 }}>{a.examples}</div>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        {[{l:"Viability",v:result.viabilityScore,c:result.viabilityScore>60?"#059669":result.viabilityScore>35?"#D97706":"#DC2626"},{l:"Deploy",v:result.deploymentYears+"yr",c:"#334155"},{l:"Risk",v:result.riskScore,c:result.riskScore>60?"#DC2626":result.riskScore>35?"#D97706":"#059669"}].map(m=>(
+          <div key={m.l}><div style={{fontFamily:SANS,fontSize:8,color:"#94A3B8",textTransform:"uppercase",letterSpacing:"0.05em"}}>{m.l}</div><div style={{fontFamily:MONO,fontSize:15,fontWeight:700,color:m.c}}>{m.v}</div></div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StackTable({ archId }) {
+  const a = ARCHITECTURES[archId];
+  const layers = [{name:"Real Estate",key:"realEstate"},{name:"Power Generation",key:"power"},{name:"Interconnect / Fiber",key:"fiber"},{name:"Hardware (GPUs/TPUs)",key:"hardware"},{name:"Orchestration Software",key:"orchestration"}];
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ fontFamily: SANS, fontSize: 11, fontWeight: 700, color: "#334155", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.06em" }}>Stack Ownership — {a.name}</div>
+      {layers.map(l => {
+        const val = a.stackOwnership[l.key];
+        const isRisk = val.includes("RISK") || val.includes("vulnerable");
+        return (<div key={l.key} style={{ display: "flex", borderBottom: "1px solid #F1F5F9", padding: "6px 0", gap: 12, alignItems: "baseline" }}><div style={{ fontFamily: SANS, fontSize: 10, fontWeight: 600, color: "#64748B", width: 120, flexShrink: 0 }}>{l.name}</div><div style={{ fontFamily: SANS, fontSize: 11, color: isRisk ? "#DC2626" : "#334155", fontWeight: isRisk ? 600 : 400, background: isRisk ? "#FEF2F2" : "transparent", padding: isRisk ? "1px 6px" : 0, borderRadius: 4 }}>{val}</div></div>);
+      })}
+    </div>
+  );
+}
+
+function InfraSimulator() {
+  const [geography, setGeography] = useState("us");
+  const [scenario, setScenario] = useState("base");
+  const [params, setParams] = useState(SCENARIO_PRESETS.base.params);
+  const [selectedArch, setSelectedArch] = useState("poweredLand");
+  const [tab, setTab] = useState("overview");
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelTab, setPanelTab] = useState("scenarios");
+  const [rankMetric, setRankMetric] = useState("viabilityScore");
+
+  const geo = GEOGRAPHIES[geography];
+  const preset = SCENARIO_PRESETS[scenario];
+  const setParam = useCallback((key, val) => { setParams(prev => ({ ...prev, [key]: val })); }, []);
+  const selectScenario = useCallback((key) => { setScenario(key); setParams(SCENARIO_PRESETS[key].params); }, []);
+  const results = useMemo(() => Object.keys(ARCHITECTURES).map(id => simulateArchitecture(id, params, geo)), [params, geo]);
+
+  const radarData = useMemo(() => {
+    const dims = ["viabilityScore", "hyperscalerAlignment", "roi"];
+    const labels = ["Viability", "Hyperscaler Fit", "ROI Index"];
+    return labels.map((label, i) => { const d = { dimension: label }; results.forEach(r => { d[r.id] = r[dims[i]]; }); return d; });
+  }, [results]);
+
+  const deploymentData = useMemo(() => results.map(r => ({ name: r.name.length > 18 ? r.name.split(" ").slice(0, 2).join(" ") : r.name, years: r.deploymentYears, color: r.color })), [results]);
+  const economicsData = useMemo(() => results.map(r => ({ name: r.name.length > 18 ? r.name.split(" ").slice(0, 2).join(" ") : r.name, capex: r.capexPerMW, revenue: r.revenuePerMW, color: r.color })), [results]);
+
+  const timeProjection = useMemo(() => {
+    return [2025,2026,2027,2028,2029,2030].map((yr,i) => {
+      const t = i/5; const evolved = {year:yr};
+      Object.keys(ARCHITECTURES).forEach(id => {
+        const r = simulateArchitecture(id, {...params, interconnectImprovement: Math.min(1, params.interconnectImprovement + t*0.1), openSourceAdoption: Math.min(1, params.openSourceAdoption + t*0.08), laborSupplyGrowth: Math.min(1, params.laborSupplyGrowth + t*0.05), brownfieldConversion: Math.min(1, (params.brownfieldConversion||0.3) + t*0.1), captivePowerBuild: Math.min(1, (params.captivePowerBuild||0.25) + t*0.06)}, geo);
+        evolved[id] = r.viabilityScore;
+      });
+      return evolved;
+    });
+  }, [params, geo]);
+
+  const selected = results.find(r => r.id === selectedArch);
+  const PANEL_HEIGHT = 360;
+
+  const NARRATIVES = {
+    base: `In this base case, interconnection queues remain crippling through 2030. Hyperscalers grow desperate for near-term capacity. The Powered Land model (Nodiac-style) wins by executing the cell-tower playbook. Behind-the-meter edge (Lektra-style) finds a niche in non-hyperscaler markets. Brownfield sites see opportunistic conversion but limited by available inventory. Captive power programs (MSFT/Three Mile Island, Google/Intersect) are underway but won't deliver at scale until 2028-29.`,
+    brownfield: `Retired coal and gas plants become the hottest real estate in AI infrastructure. Their existing grid interconnection — substations, transmission lines, permitting — bypasses the 5-8 year queue entirely. Developers and hyperscalers race to secure decommissioned sites. Cumulus Data at Susquehanna becomes the template. Nodiac benefits from adjacent substation capacity at these sites. Hyperscaler captive power programs accelerate in parallel.`,
+    openSource: `Open-source models capture 60%+ of inference. Token costs collapse toward pure energy cost. Both Nodiac and Lektra find strong markets. Brownfield sites serve as low-cost inference farms for open-source workloads.`,
+    gridFixed: `Policy reforms solve the interconnect bottleneck. Centralized hyperscale reasserts dominance. Captive power programs (nuclear, geothermal) deliver at scale. Nodiac's premium collapses. Lektra struggles. Brownfield reuse accelerates as part of broader grid modernization.`,
+    appleEdge: `Apple launches distributed inference across its device fleet. Nodiac unaffected. Lektra's residential play gets crushed, CNI survives.`,
+    bubble: `The $400B AI spend is recognized as bubble. Halted construction. Stranded infra becomes dark fiber of 2020s. Brownfield conversion projects freeze mid-development. Captive power deals unwind as hyperscaler capex budgets collapse.`,
+    captiveDominance: `Hyperscalers stop waiting for the grid and start building their own power plants. Microsoft restarts Three Mile Island. Amazon deepens its Talen partnership. Google funds next-gen geothermal and SMRs. By 2028-29, the Mag 7 collectively own or control 15-20 GW of dedicated generation. The grid interconnect queue becomes irrelevant for AI. Nodiac's "powered land" premium compresses. Brownfield sites become acquisition targets for their existing generation licenses. Neo-clouds get squeezed hardest.`
+  };
+
+  return (
+    <div style={{ fontFamily: SANS, height: "100vh", display: "flex", flexDirection: "column", background: "linear-gradient(180deg, #F8FAFC 0%, #F1F5F9 100%)", color: "#1E293B" }}>
+      {/* Header */}
+      <div style={{ background: "linear-gradient(135deg, #0F172A 0%, #1E293B 50%, #0F172A 100%)", padding: "16px 20px 12px", color: "white", borderBottom: "3px solid #0D9488", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontFamily: FONT, fontSize: 21, fontWeight: 400, letterSpacing: "-0.02em", marginBottom: 2 }}>AI Infrastructure Deployment Simulator</div>
+            <div style={{ fontFamily: SANS, fontSize: 10.5, color: "#94A3B8", fontWeight: 400 }}>Third Sphere — 7 architectures · 7 scenarios · 2 geographies</div>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {Object.entries(GEOGRAPHIES).map(([key, g]) => (
+              <button key={key} onClick={() => setGeography(key)} style={{ fontFamily: SANS, fontSize: 11, fontWeight: 600, padding: "6px 14px", borderRadius: 6, border: "none", cursor: "pointer", background: geography === key ? "#0D9488" : "rgba(255,255,255,0.08)", color: geography === key ? "white" : "#94A3B8", transition: "all 0.15s" }}>{g.name}</button>
+            ))}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontFamily: MONO, fontSize: 10, color: "#475569" }}>ACTIVE:</span>
+          <span style={{ fontFamily: SANS, fontSize: 11, fontWeight: 600, color: "#0D9488", background: "#0D948818", padding: "3px 10px", borderRadius: 4 }}>{preset.name}</span>
+          <span style={{ fontFamily: MONO, fontSize: 10, color: "#475569" }}>{preset.probability}</span>
+        </div>
+      </div>
+
+      {/* Main */}
+      <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+        <div style={{ padding: "14px 20px" }}>
+          <div style={{ display: "flex", gap: 4, marginBottom: 14, borderBottom: "1px solid #E2E8F0", paddingBottom: 8, flexWrap: "wrap" }}>
+            {[{id:"overview",label:"Overview"},{id:"rankings",label:"Rankings"},{id:"economics",label:"Economics"},{id:"timeline",label:"5-Year Projection"},{id:"stack",label:"Stack Analysis"}].map(t => (
+              <button key={t.id} onClick={() => setTab(t.id)} style={{ fontFamily: SANS, fontSize: 11, fontWeight: tab === t.id ? 700 : 500, padding: "6px 14px", borderRadius: 6, border: "none", cursor: "pointer", background: tab === t.id ? "#0F172A" : "transparent", color: tab === t.id ? "white" : "#64748B", transition: "all 0.15s" }}>{t.label}</button>
+            ))}
+          </div>
+
+          {tab === "overview" && (
+            <div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(185px, 1fr))", gap: 8, marginBottom: 18 }}>
+                {results.map(r => <ArchCard key={r.id} arch={r.id} result={r} isSelected={selectedArch === r.id} onClick={() => setSelectedArch(r.id)} />)}
+              </div>
+              {selected && (
+                <div style={{ background: "white", borderRadius: 12, padding: 20, border: `1px solid ${ARCHITECTURES[selectedArch].color}20`, marginBottom: 18 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+                    <div style={{ width: 12, height: 12, borderRadius: "50%", background: selected.color }} />
+                    <div style={{ fontFamily: FONT, fontSize: 20, color: "#1E293B" }}>{ARCHITECTURES[selectedArch].name}</div>
+                  </div>
+                  <div style={{ fontFamily: SANS, fontSize: 11, color: "#64748B", marginBottom: 16, lineHeight: 1.5 }}>{ARCHITECTURES[selectedArch].description}</div>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
+                    <MetricCard label="Viability" value={selected.viabilityScore} unit="/100" color="#059669" />
+                    <MetricCard label="Deploy Time" value={selected.deploymentYears} unit="yr" color="#0D9488" />
+                    <MetricCard label="Capex/MW" value={`$${(selected.capexPerMW/1000).toFixed(1)}M`} unit="" color="#6366F1" />
+                    <MetricCard label="Revenue/MW" value={`$${selected.revenuePerMW}K`} unit="/yr" color="#D97706" />
+                    <MetricCard label="Hyperscaler Fit" value={selected.hyperscalerAlignment} unit="/100" color="#5B21B6" />
+                    <MetricCard label="Risk" value={selected.riskScore} unit="/100" color="#DC2626" sub={selected.riskScore > 60 ? "HIGH" : selected.riskScore > 35 ? "MODERATE" : "LOW"} />
+                  </div>
+                  <StackTable archId={selectedArch} />
+                </div>
+              )}
+              <div style={{ background: "white", borderRadius: 12, padding: 20, border: "1px solid #E2E8F0" }}>
+                <div style={{ fontFamily: SANS, fontSize: 11, fontWeight: 700, color: "#334155", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>Comparative Radar — {geo.name}</div>
+                <ResponsiveContainer width="100%" height={300}>
+                  <RadarChart data={radarData}>
+                    <PolarGrid stroke="#E2E8F0" />
+                    <PolarAngleAxis dataKey="dimension" tick={{ fontSize: 10, fill: "#64748B", fontFamily: SANS }} />
+                    <PolarRadiusAxis tick={{ fontSize: 9, fill: "#94A3B8" }} domain={[0, 100]} />
+                    {Object.entries(ARCHITECTURES).map(([id, a]) => <Radar key={id} name={a.name} dataKey={id} stroke={a.color} fill={a.color} fillOpacity={0.06} strokeWidth={2} />)}
+                    <Legend wrapperStyle={{ fontSize: 9, fontFamily: SANS }} />
+                  </RadarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
+          {tab === "rankings" && (() => {
+            const RM = [{id:"viabilityScore",label:"Viability",hb:true,fmt:v=>v,unit:"/100",color:"#059669"},{id:"hyperscalerAlignment",label:"Hyperscaler Fit",hb:true,fmt:v=>v,unit:"/100",color:"#5B21B6"},{id:"roi",label:"ROI Index",hb:true,fmt:v=>v,unit:"%",color:"#0D9488"},{id:"riskScore",label:"Risk (lower = better)",hb:false,fmt:v=>v,unit:"/100",color:"#DC2626"},{id:"deploymentYears",label:"Deploy Speed",hb:false,fmt:v=>v,unit:"yr",color:"#0369A1"},{id:"capexPerMW",label:"Capex Efficiency",hb:false,fmt:v=>`$${(v/1000).toFixed(1)}M`,unit:"",color:"#6366F1"},{id:"revenuePerMW",label:"Revenue/MW",hb:true,fmt:v=>`$${v}K`,unit:"/yr",color:"#D97706"}];
+            const am = RM.find(m => m.id === rankMetric);
+            const sorted = [...results].sort((a,b) => am.hb ? b[rankMetric]-a[rankMetric] : a[rankMetric]-b[rankMetric]);
+            const tv = sorted[0]?.[rankMetric] || 1;
+            return (
+              <div>
+                <div style={{ display: "flex", gap: 4, marginBottom: 16, flexWrap: "wrap" }}>
+                  {RM.map(m => <button key={m.id} onClick={() => setRankMetric(m.id)} style={{ fontFamily: SANS, fontSize: 10, fontWeight: rankMetric === m.id ? 700 : 500, padding: "5px 12px", borderRadius: 6, border: "none", cursor: "pointer", background: rankMetric === m.id ? m.color : "#F1F5F9", color: rankMetric === m.id ? "white" : "#64748B" }}>{m.label.split("(")[0].trim()}</button>)}
+                </div>
+                <div style={{ background: "white", borderRadius: 12, padding: 20, border: "1px solid #E2E8F0" }}>
+                  <div style={{ fontFamily: SANS, fontSize: 11, fontWeight: 700, color: "#334155", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>{am.label} — Ranked</div>
+                  <div style={{ fontFamily: SANS, fontSize: 10, color: "#94A3B8", marginBottom: 16 }}>{am.hb ? "Highest score wins" : "Lowest score wins"} · {preset.shortName} · {geo.name}</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {sorted.map((r,i) => {
+                      const raw = r[rankMetric];
+                      const pct = am.hb ? (tv>0?(raw/tv)*100:0) : (raw>0?(sorted[0][rankMetric]/raw)*100:100);
+                      const medal = i===0?"\ud83e\udd47":i===1?"\ud83e\udd48":i===2?"\ud83e\udd49":"";
+                      return (
+                        <div key={r.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px", background:i===0?`${am.color}08`:"#FAFBFC", border:i===0?`1.5px solid ${am.color}30`:"1px solid #F1F5F9", borderRadius:10 }}>
+                          <div style={{ fontFamily:MONO, fontSize:16, fontWeight:700, color:i<3?am.color:"#94A3B8", width:28, textAlign:"center", flexShrink:0 }}>{medal||`#${i+1}`}</div>
+                          <div style={{ width:10, height:10, borderRadius:"50%", background:r.color, flexShrink:0 }} />
+                          <div style={{ width:140, flexShrink:0 }}><div style={{ fontFamily:SANS, fontSize:11.5, fontWeight:600, color:"#1E293B" }}>{r.name}</div><div style={{ fontFamily:SANS, fontSize:9, color:"#94A3B8" }}>{ARCHITECTURES[r.id].examples.split(",")[0]}</div></div>
+                          <div style={{ flex:1, position:"relative", height:22, background:"#F1F5F9", borderRadius:6, overflow:"hidden" }}><div style={{ position:"absolute", top:0, left:0, height:"100%", width:`${Math.max(4,Math.min(100,pct))}%`, background:`linear-gradient(90deg, ${r.color}90, ${r.color}60)`, borderRadius:6 }} /></div>
+                          <div style={{ fontFamily:MONO, fontSize:15, fontWeight:700, color:i===0?am.color:"#334155", width:70, textAlign:"right", flexShrink:0 }}>{am.fmt(raw)}<span style={{ fontSize:9, fontWeight:400, color:"#94A3B8" }}> {am.unit}</span></div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div style={{ marginTop:16, background:"linear-gradient(135deg, #0F172A, #1E293B)", borderRadius:12, padding:20, color:"white" }}>
+                  <div style={{ fontFamily:FONT, fontSize:18, marginBottom:12 }}>Top 3 — Full Scorecard</div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12 }}>
+                    {sorted.slice(0,3).map((r,i) => (
+                      <div key={r.id} style={{ background:"rgba(255,255,255,0.04)", borderRadius:10, padding:14, border:`1px solid ${r.color}40` }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:10 }}>
+                          <span style={{ fontSize:16 }}>{["\ud83e\udd47","\ud83e\udd48","\ud83e\udd49"][i]}</span>
+                          <div style={{ width:8, height:8, borderRadius:"50%", background:r.color }} />
+                          <div style={{ fontFamily:SANS, fontSize:11, fontWeight:700, color:"#E2E8F0" }}>{r.name}</div>
+                        </div>
+                        {[{l:"Viability",v:r.viabilityScore,u:"/100",g:r.viabilityScore>50},{l:"Deploy",v:`${r.deploymentYears}yr`,u:"",g:r.deploymentYears<2},{l:"Capex/MW",v:`$${(r.capexPerMW/1000).toFixed(1)}M`,u:"",g:r.capexPerMW<2000},{l:"Revenue/MW",v:`$${r.revenuePerMW}K`,u:"/yr",g:r.revenuePerMW>800},{l:"Hyperscaler Fit",v:r.hyperscalerAlignment,u:"/100",g:r.hyperscalerAlignment>70},{l:"Risk",v:r.riskScore,u:"/100",g:r.riskScore<35}].map(m=>(
+                          <div key={m.l} style={{ display:"flex", justifyContent:"space-between", padding:"3px 0", borderBottom:"1px solid rgba(255,255,255,0.06)" }}><span style={{ fontFamily:SANS, fontSize:9, color:"#94A3B8" }}>{m.l}</span><span style={{ fontFamily:MONO, fontSize:10, fontWeight:600, color:m.g?"#34D399":"#CBD5E1" }}>{m.v}{m.u}</span></div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {tab === "economics" && (
+            <div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:20 }}>
+                <div style={{ background:"white", borderRadius:12, padding:20, border:"1px solid #E2E8F0" }}>
+                  <div style={{ fontFamily:SANS, fontSize:11, fontWeight:700, color:"#334155", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:16 }}>Deployment Speed (Years to First MW)</div>
+                  <ResponsiveContainer width="100%" height={340}>
+                    <BarChart data={deploymentData} layout="vertical" margin={{left:10}}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                      <XAxis type="number" tick={{fontSize:10,fontFamily:MONO}} unit="yr" />
+                      <YAxis type="category" dataKey="name" tick={{fontSize:9,fontFamily:SANS}} width={95} />
+                      <Tooltip contentStyle={{fontFamily:SANS,fontSize:11}} />
+                      <Bar dataKey="years" radius={[0,4,4,0]}>{deploymentData.map((d,i)=><Cell key={i} fill={d.color} />)}</Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div style={{ background:"white", borderRadius:12, padding:20, border:"1px solid #E2E8F0" }}>
+                  <div style={{ fontFamily:SANS, fontSize:11, fontWeight:700, color:"#334155", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:16 }}>Capex vs Revenue per MW ($K)</div>
+                  <ResponsiveContainer width="100%" height={340}>
+                    <BarChart data={economicsData} margin={{left:10}}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                      <XAxis dataKey="name" tick={{fontSize:8,fontFamily:SANS}} interval={0} angle={-25} textAnchor="end" height={55} />
+                      <YAxis tick={{fontSize:10,fontFamily:MONO}} />
+                      <Tooltip contentStyle={{fontFamily:SANS,fontSize:11}} />
+                      <Legend wrapperStyle={{fontSize:10,fontFamily:SANS}} />
+                      <Bar dataKey="capex" name="Capex/MW ($K)" fill="#6366F1" radius={[4,4,0,0]} />
+                      <Bar dataKey="revenue" name="Revenue/MW/yr ($K)" fill="#0D9488" radius={[4,4,0,0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+              <div style={{ background:"linear-gradient(135deg, #0F172A, #1E293B)", borderRadius:12, padding:20, color:"white" }}>
+                <div style={{ fontFamily:FONT, fontSize:18, marginBottom:8 }}>The $700K/MW Arbitrage</div>
+                <div style={{ fontFamily:SANS, fontSize:12, color:"#CBD5E1", lineHeight:1.6, maxWidth:700 }}>A solar plant selling to the grid makes ~$100-150K per MW annually. The same MW powering distributed AI inference yields ~$700K/yr — a 5-7x arbitrage. In {geo.name}, with {Math.round(geo.solarIrradiance*100)}% solar irradiance and ${geo.avgElectricityCost}/kWh grid rates, the spread is {geo.avgElectricityCost < 0.1 ? "even wider" : "significant but compressed by higher grid costs"}. Brownfield sites add another dimension: existing interconnection avoids the queue entirely, though conversion capex (~$4M/MW) sits between greenfield centralized and distributed models.</div>
+              </div>
+            </div>
+          )}
+
+          {tab === "timeline" && (
+            <div>
+              <div style={{ background:"white", borderRadius:12, padding:20, border:"1px solid #E2E8F0", marginBottom:20 }}>
+                <div style={{ fontFamily:SANS, fontSize:11, fontWeight:700, color:"#334155", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:4 }}>Viability Score Projection 2025-2030 — {geo.name}</div>
+                <div style={{ fontFamily:SANS, fontSize:10, color:"#94A3B8", marginBottom:16 }}>Assumes gradual improvements across all parameters over 5 years</div>
+                <ResponsiveContainer width="100%" height={360}>
+                  <LineChart data={timeProjection}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                    <XAxis dataKey="year" tick={{fontSize:11,fontFamily:MONO}} />
+                    <YAxis tick={{fontSize:10,fontFamily:MONO}} domain={[0,100]} />
+                    <Tooltip contentStyle={{fontFamily:SANS,fontSize:11}} />
+                    <Legend wrapperStyle={{fontSize:9,fontFamily:SANS}} />
+                    {Object.entries(ARCHITECTURES).map(([id,a])=><Line key={id} type="monotone" dataKey={id} name={a.name} stroke={a.color} strokeWidth={2.5} dot={{r:3}} />)}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <div style={{ background:"white", borderRadius:12, padding:20, border:"1px solid #E2E8F0" }}>
+                <div style={{ fontFamily:FONT, fontSize:18, color:"#1E293B", marginBottom:8 }}>Scenario Narrative: {preset.name}</div>
+                <div style={{ fontFamily:SANS, fontSize:12, color:"#475569", lineHeight:1.65 }}>{NARRATIVES[scenario] || NARRATIVES.base}{geography === "southernAfrica" ? " In Southern Africa, the weak grid reliability (45%) and high solar irradiance (92%) shift the calculus — behind-the-meter and distributed models gain structural advantages." : ""}</div>
+              </div>
+            </div>
+          )}
+
+          {tab === "stack" && (
+            <div>
+              <div style={{ background:"linear-gradient(135deg, #0F172A, #1E293B)", borderRadius:12, padding:20, color:"white", marginBottom:20 }}>
+                <div style={{ fontFamily:FONT, fontSize:18, marginBottom:8 }}>The Critical Question: Who Owns the Orchestration?</div>
+                <div style={{ fontFamily:SANS, fontSize:12, color:"#CBD5E1", lineHeight:1.65 }}>Almost certainly the hyperscalers. Google is building distributed TPU routing. Microsoft is job-shifting workloads. Chip specialization means they must control routing. Nodiac and brownfield developers sell to hyperscalers. Lektra and other orchestration platforms serve non-hyperscaler markets. Captive power is the ultimate vertical integration — hyperscalers owning generation, land, hardware, and orchestration end-to-end.</div>
+              </div>
+              <div style={{ background:"white", borderRadius:12, padding:20, border:"1px solid #E2E8F0", overflowX:"auto" }}>
+                <div style={{ fontFamily:SANS, fontSize:11, fontWeight:700, color:"#334155", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:16 }}>Stack Ownership Matrix</div>
+                <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:SANS, fontSize:10 }}>
+                  <thead><tr style={{ borderBottom:"2px solid #E2E8F0" }}><th style={{ textAlign:"left", padding:"8px", fontWeight:700, color:"#64748B" }}>Layer</th>{Object.entries(ARCHITECTURES).map(([id,a])=><th key={id} style={{ textAlign:"left", padding:"8px 4px", fontWeight:700, color:a.color, fontSize:8 }}>{a.name.split(" ").slice(0,2).join(" ")}</th>)}</tr></thead>
+                  <tbody>
+                    {["realEstate","power","fiber","hardware","orchestration"].map(layer=>(
+                      <tr key={layer} style={{ borderBottom:"1px solid #F1F5F9" }}>
+                        <td style={{ padding:"8px", fontWeight:600, color:"#475569", textTransform:"capitalize", fontSize:10 }}>{layer==="realEstate"?"Real Estate":layer}</td>
+                        {Object.entries(ARCHITECTURES).map(([id,a])=>{const val=a.stackOwnership[layer];const isR=val.includes("RISK")||val.includes("vulnerable");return <td key={id} style={{ padding:"7px 4px", color:isR?"#DC2626":"#475569", fontWeight:isR?600:400, fontSize:8, lineHeight:1.4 }}>{val}</td>;})}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, marginTop:20 }}>
+                {[{id:"poweredLand",name:"Nodiac",color:"#0D9488",desc:"Sells exactly what hyperscalers need. $25M cap / 20% discount SAFE. Key gating: Google TPU deal."},{id:"edgeCloud",name:"Lektra",color:"#D97706",desc:"Owns orchestration (Maestro). Multiple orchestration platforms emerging. Best in sovereign AI / emerging markets."},{id:"brownfield",name:"Brownfield",color:"#78716C",desc:"Existing interconnection is the killer advantage. Limited site inventory is the constraint."}].map(c=>{
+                  const v = results.find(r=>r.id===c.id)?.viabilityScore||0;
+                  const grade = v>50?"STRONG":v>30?"MODERATE":"WEAK";
+                  return (
+                    <div key={c.id} style={{ background:`${c.color}10`, borderRadius:12, padding:16, border:`1px solid ${c.color}25` }}>
+                      <div style={{ fontFamily:SANS, fontSize:11, fontWeight:700, color:c.color, marginBottom:6 }}>{c.name}: {grade}</div>
+                      <div style={{ fontFamily:SANS, fontSize:10, color:"#475569", lineHeight:1.5 }}>{c.desc}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Bottom Panel */}
+      <div style={{ flexShrink:0, background:"#0F172A", borderTop:"2px solid #0D9488", transition:"all 0.3s ease" }}>
+        <div onClick={()=>setPanelOpen(!panelOpen)} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"8px 20px", cursor:"pointer", userSelect:"none" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:12, overflow:"auto" }}>
+            <span style={{ fontFamily:SANS, fontSize:11, fontWeight:700, color:"#94A3B8", textTransform:"uppercase", letterSpacing:"0.08em", flexShrink:0 }}>Scenarios</span>
+            <div style={{ display:"flex", gap:3 }}>
+              {Object.entries(SCENARIO_PRESETS).map(([key,s])=>(
+                <button key={key} onClick={e=>{e.stopPropagation();selectScenario(key);if(!panelOpen)setPanelOpen(true);}} style={{ fontFamily:SANS, fontSize:9.5, fontWeight:scenario===key?700:500, padding:"3px 8px", borderRadius:4, border:"none", cursor:"pointer", background:scenario===key?"#0D9488":"rgba(255,255,255,0.06)", color:scenario===key?"white":"#64748B", whiteSpace:"nowrap" }}>{s.shortName}</button>
+              ))}
+            </div>
+          </div>
+          <div style={{ fontFamily:MONO, fontSize:14, color:"#64748B", transform:panelOpen?"rotate(180deg)":"rotate(0deg)", transition:"transform 0.2s", flexShrink:0, marginLeft:8 }}>▲</div>
+        </div>
+
+        {panelOpen && (
+          <div style={{ borderTop:"1px solid #1E293B", maxHeight:PANEL_HEIGHT, overflow:"hidden" }}>
+            <div style={{ display:"flex", gap:2, padding:"8px 20px 0" }}>
+              {[{id:"scenarios",label:"Scenario Detail"},{id:"params",label:"Tune Parameters"},{id:"grid",label:"Grid Baseline"}].map(t=>(
+                <button key={t.id} onClick={()=>setPanelTab(t.id)} style={{ fontFamily:SANS, fontSize:10, fontWeight:panelTab===t.id?700:500, padding:"5px 12px", borderRadius:"6px 6px 0 0", border:"none", cursor:"pointer", background:panelTab===t.id?"#1E293B":"transparent", color:panelTab===t.id?"#E2E8F0":"#64748B" }}>{t.label}</button>
+              ))}
+            </div>
+            <div style={{ background:"#1E293B", padding:"14px 20px", overflowY:"auto", maxHeight:PANEL_HEIGHT-42 }}>
+              {panelTab === "scenarios" && (
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(200px, 1fr))", gap:8 }}>
+                  {Object.entries(SCENARIO_PRESETS).map(([key,s])=>(
+                    <div key={key} onClick={()=>selectScenario(key)} style={{ padding:"10px 12px", borderRadius:8, cursor:"pointer", background:scenario===key?"#0D948818":"rgba(255,255,255,0.03)", border:scenario===key?"1px solid #0D948850":"1px solid #334155" }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:3 }}>
+                        <div style={{ fontFamily:SANS, fontSize:10.5, fontWeight:700, color:scenario===key?"#0D9488":"#CBD5E1" }}>{s.shortName}</div>
+                        <span style={{ fontFamily:MONO, fontSize:9, color:"#64748B" }}>{s.probability}</span>
+                      </div>
+                      <div style={{ fontFamily:SANS, fontSize:9.5, color:"#94A3B8", lineHeight:1.4 }}>{s.description}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {panelTab === "params" && (
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:"4px 24px" }}>
+                  <SliderParam label="Interconnect Queue Fix" value={params.interconnectImprovement} onChange={v=>setParam("interconnectImprovement",v)} hint="0% = 5-8yr queues. 100% = solved." />
+                  <SliderParam label="Open Source Adoption" value={params.openSourceAdoption} onChange={v=>setParam("openSourceAdoption",v)} hint="% inference on open-source models" />
+                  <SliderParam label="Inference → Edge Shift" value={params.inferenceShift} onChange={v=>setParam("inferenceShift",v)} hint="% inference migrating from centralized" />
+                  <SliderParam label="Energy Price Volatility" value={params.energyPriceVolatility} onChange={v=>setParam("energyPriceVolatility",v)} hint="Grid price spike frequency" />
+                  <SliderParam label="Labor Supply Growth" value={params.laborSupplyGrowth} onChange={v=>setParam("laborSupplyGrowth",v)} hint="Electrician/lineman workforce" />
+                  <SliderParam label="Hyperscaler Edge Build" value={params.hyperscalerEdgeBuild} onChange={v=>setParam("hyperscalerEdgeBuild",v)} hint="Google/MSFT build own distributed" />
+                  <SliderParam label="Chip Specialization" value={params.chipSpecialization} onChange={v=>setParam("chipSpecialization",v)} hint="TPU/custom inference chip adoption" />
+                  <SliderParam label="Apple Edge Launch" value={params.appleEdgeLaunch} onChange={v=>setParam("appleEdgeLaunch",v)} hint="Apple distributed inference" />
+                  <SliderParam label="Bubble Burst" value={params.bubbleBurst} onChange={v=>setParam("bubbleBurst",v)} hint="$400B AI spend as bubble" />
+                  <SliderParam label="Brownfield Conversion" value={params.brownfieldConversion||0} onChange={v=>setParam("brownfieldConversion",v)} hint="Rate of coal/gas/industrial site reuse" />
+                  <SliderParam label="Captive Power Build" value={params.captivePowerBuild||0} onChange={v=>setParam("captivePowerBuild",v)} hint="Hyperscaler dedicated gen (nuclear/gas/geo)" />
+                </div>
+              )}
+              {panelTab === "grid" && (
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(140px, 1fr))", gap:"8px 20px" }}>
+                  {[{l:"Grid Reliability",v:`${Math.round(geo.gridReliability*100)}%`},{l:"Avg Electricity",v:`$${geo.avgElectricityCost}/kWh`},{l:"Solar Irradiance",v:`${Math.round(geo.solarIrradiance*100)}%`},{l:"Interconnect Queue",v:`${geo.interconnectQueueYears} yr`},{l:"Fiber Penetration",v:`${Math.round(geo.fiberPenetration*100)}%`},{l:"Substation Headroom",v:`${Math.round(geo.existingSubstationHeadroom*100)}%`},{l:"Solar Cost",v:`$${geo.solarCostPerWatt}/W`},{l:"Battery Storage",v:`$${geo.batteryStorageCostKwh}/kWh`},{l:"Labor Availability",v:`${Math.round(geo.laborAvailability*100)}%`},{l:"Consumer Broadband",v:`${Math.round(geo.consumerBroadband*100)}%`},{l:"Brownfield Sites",v:`${Math.round((geo.brownfieldSiteAvailability||0.5)*100)}%`},{l:"Nuclear Pipeline",v:`${Math.round((geo.nuclearPipelineMaturity||0.2)*100)}%`}].map(item=>(
+                    <div key={item.l} style={{ padding:"6px 0" }}><div style={{ fontFamily:SANS, fontSize:9, fontWeight:600, color:"#64748B", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:2 }}>{item.l}</div><div style={{ fontFamily:MONO, fontSize:14, fontWeight:600, color:"#E2E8F0" }}>{item.v}</div></div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.render(<InfraSimulator />, document.getElementById('root'));
+</script>
+</body>
+</html>
